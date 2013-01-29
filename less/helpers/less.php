@@ -1,4 +1,4 @@
-<?php 
+<?php  
 /**
  * @package Helpers
  * @category Less
@@ -33,73 +33,53 @@ class LessHelper {
 	 * @return $str
 	 */
 	public function link($file, $pkgHandle = null) {
-
-		$fh=loader::helper('file');
+		$fh = loader::helper('file');
 
 		Loader::library('3rdparty/lessc.inc', 'less');
 		
-		$less = new LessOutputObject();
-
-		// if the first character is a / then that means we just go right through, it's a direct path
-		if (substr($file, 0, 1) == '/' || substr($file, 0, 4) == 'http' || strpos($file, DISPATCHER_FILENAME) > -1) {
-			$less->compress = false;
-			$filename = $file;
-		}
+		$v 			= View::getInstance();
+		$base		= $v->getThemeDirectory() . "/";
+		$filename		= $file;
+		$dest_filename	= str_replace(".less", ".rendered.css", $filename);
+		$url			= BASE_URL . $v->getThemePath() . "/". $dest_filename . '?v=' . md5(APP_VERSION . PASSWORD_SALT);
 		
-		$v = View::getInstance();
-		// checking the theme directory for it. It's just in the root.
-		if ($v->getThemeDirectory() != '' && file_exists($v->getThemeDirectory() . '/' . $file)) {
-			$filename = $v->getThemePath() . '/' . $file;
-		} else if ($pkgHandle != null) {
-			if (file_exists(DIR_BASE . '/' . DIRNAME_PACKAGES . '/' . $pkgHandle . '/' . DIRNAME_CSS . '/' . $file)) {
-				$filename = DIR_REL . '/' . DIRNAME_PACKAGES . '/' . $pkgHandle . '/' . DIRNAME_CSS . '/' . $file;
-			} else if (file_exists(DIR_BASE_CORE . '/' . DIRNAME_PACKAGES . '/' . $pkgHandle . '/' . DIRNAME_CSS . '/' . $file)) {
-				$filename = ASSETS_URL . '/' . DIRNAME_PACKAGES . '/' . $pkgHandle . '/' . DIRNAME_CSS . '/' . $file;
-			}
-		}
+		$cache_id		= 'lesscss_' . md5($dest_filename);
+		$less			= new lessc();
+		
+		// Register preg_replace to be used within the less file
+		$less->registerFunction("replace", function($args){
+			// String to operate on
+			$string = implode("", $args[2][0][2]);
 			
-		if ($filename == '') {
-			if (file_exists(DIR_BASE . '/' . DIRNAME_CSS . '/' . $file)) {
-				$filename = DIR_REL . '/' . DIRNAME_CSS . '/' . $file;
-			} else {
-				$filename = ASSETS_URL_CSS . '/' . $file;
-			}
-		}
-		
-		$dest_filename = md5($filename).".css";
-		
-		
-		// Now we have the file to play with
-		$less->file = $v->getThemeDirectory() . '/' . $file;
-
-		// if there is no CSS, or the Less has changed more recently than the corresponding
-		// CSS, we need to parse it. 		
-		if ( ( !file_exists(DIR_BASE . '/' . DIRNAME_CSS . '/' .$dest_filename) ) 
-					|| ( filemtime(DIR_BASE . '/' . $filename) > filemtime(DIR_BASE . '/' . DIRNAME_CSS . '/' .$dest_filename) ) ) {
-		
-			$lessc = new lessc();
-			$data = file_get_contents(DIR_BASE . '/' . $filename);
-			$output_file = DIRNAME_CSS."/".$dest_filename;
+			// Regex to match on
+			$regex = implode("", $args[2][1][2]);
 			
-			try {
-      	$output_data = $lessc->parse($data);              
-			  file_put_contents($output_file, $output_data);
-			}
-			catch (Exception $e) {
-				$message = t('LESS ERROR: '). $e->getMessage() .', '. $less->file;
-			}
+			// String to replace with
+			$replace = implode("", $args[2][2][2]);
+			
+			return preg_replace($regex, $replace, $string);
+		});
+		
+		
+		if($cache_o = Cache::get('lesscss', $cache_id)){
+			$cache			= $less->cachedCompile($cache_o);
+			$last_updated	= $cache_o['updated']; 
+		}else{
+			$cache = $less->cachedCompile($base . $filename);
+		
+			$last_updated = 0;
 		}
 
-		$less->file = ASSETS_URL_WEB.'/'.DIRNAME_CSS.'/'.$dest_filename;
+		if ($cache["updated"] > $last_updated) {
+			Cache::set('lesscss', $cache_id, $cache);
 
-		$less->file .= (strpos($less->file, '?') > -1) ? '&' : '?';
-		$less->file .= 'v=' . md5(APP_VERSION . PASSWORD_SALT);		
-		// for the javascript addHeaderItem we need to have a full href available
-		$less->href = $less->file;
-		if (substr($less->file, 0, 4) != 'http') {
-			$less->href = ASSETS_URL_WEB_FULL . $less->file;
+			file_put_contents($base . $dest_filename, $cache['compiled']);
 		}
-		return $less;
+		
+		$lesso = new LessOutputObject();
+		$lesso->file = $url . '&u=' . $cache['updated'];
+
+		return $lesso;
 	}
 
 }
